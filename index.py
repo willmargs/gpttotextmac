@@ -1,36 +1,37 @@
-# Script written by will margulies that creates a chatbot
-# between chatgpt and the messages in your computer.
+# Script written by William Margulies that creates a chatbot
+# between chatgpt and messages.
 # Will only work on Macs that have message integration with a phone.
-# I couldn't sleep and someone was being wacky and I thought setting
+# I couldn't sleep and my friend was being wacky and I thought setting
 # them up with a chatbot over text could be fun. I didn't realize that
 # this is complicated and chatgpt doesn't really know how to work mac's internal
-# database, so it ended up taking from like 5:45am to probably like 8am.
-# I have an econ final at 9:30am and I've gotten like an hour and a half of sleep.
-# because I'm pretty damn sick. It's chill tho.
+# message database (chat.db), so it ended up taking from like 5:45am to 9am plus like two three hours of work.
+# I am pretty sick and on 1.5hrs of sleep it's not ideal
 # Whoever's reading this wml
 # 7am update: chatgpt was able to help w internal db queries. tragic. i was just learning how it worked.
 # additionally, keep in mind that this script works on the most recent chat from this person. That
 # includes groupchats that you're in with them.
-# I went to the midterm. Thought I did great but found out I messed up a little on the last short answer. We'll see
+# I went to the midterm. Thought I did great but found out I messed up a little on the last short answer. We'll see how I did
+# Thanks for reading the preface. I'm putting some effort into commenting my code for anyone that wants, so take a peek.
 import sqlite3
 import requests
 import subprocess
 from dotenv import load_dotenv
 import os
 import time
+# Load the .env file that has environment variables, like credentials and other configs.
+# Usually this is used more for credential-type variables, but I use it here for other options
 load_dotenv()
 
-# Replace these with the actual values
 db_path = os.getenv("DB_PATH")
 phone_number = os.getenv("INTERESTED_PHONE_NUMBER")  # The phone number you're interested in
 prevText = ""
 n = 5
 i = 0
-# change prompt to specifics about the conversation:
+repetitive = False
 # Connect to the SQLite database
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
-# SQL query to find the n most recent messages from a specific phone number
+# SQL query to find the n most recent messages from a phone number put into the request parameters
 query = """
 SELECT message.text, message.date, message.is_from_me
 FROM message
@@ -39,68 +40,84 @@ WHERE handle.id = ?
 ORDER BY message.date DESC
 LIMIT ?
 """
+# Helper function to remove ChatGPT 
+def remove_prefix(text: str) -> str:
+    prefixes = ["(You):", "You:", "Them:", "(Them):"]
+    # Check if the text starts with any of the prefixes
+    for prefix in prefixes:
+        if text.startswith(prefix):
+            # Remove the prefix and potentially the space after it
+            return text[len(prefix):].strip()
+    
+    # Return the original text if no prefix is found
+    return text
+
+
+
+print("turned on")
 while True:
+    # The prompt should ask gpt to continue the conversation and provide conversation context
+    # e. g. Continue the conversation below. Return only one message to send. Make sure it 
+    # relates directly to the conversation being had below. If a message says just 'None', ignore it.
     prompt = os.getenv("PROMPT") + "\n"
     time.sleep(2.5)
-    # Execute the query
+    # Execute the query. First parameter is the other person's phone number of the conversation we want and 
+    # n is the number of phone numbers we want to be part of the context we send to chatgpt
     cursor.execute(query, (phone_number, n))
     messages = cursor.fetchall()
 
-    # Check if there are any messages
     if messages:
         # Fetch the most recent message's text
-        most_recent_message_text = messages[0][0]  # Get the text of the most recent message
-
-        # Check if the most recent message text is the same as prevText
+        most_recent_message_text = messages[0][0] 
+        # Check if the most recent message text is the same as prevText, which means that there are no new messages
         if prevText == most_recent_message_text:
             repetitive = True
-            print("exited")
         else:
-            # If they are different, update prevText and reset the repetitive flag
+            # Otherwise, we proceed and set prevText to the new message
             prevText = most_recent_message_text
             repetitive = False
         
-        # If the message sequence is repetitive, skip sending a new message
+        # If the message sequence is repetitive, skip this repetition of the while loop, where we'll run this code and check again
         if repetitive:
             continue
 
-        # Build the prompt with the conversation history
+        # Build the context we send to ChatGPT with the conversation history, assigning prefixes to each message saying who sent it
         for message in messages:
             text, date, is_from_me = message
             sender = "Me" if is_from_me else "Them"
             prompt += f"({sender}): {text}\n"
-    print(prompt)
-    # The rest of your code for generating and sending the message follows here
-
-    dummy = True
-    if repetitive:
-        continue
-    # Close the connection
+    # Helper function to create gpt4 request
     def query_gpt4(prompt):
-        # REPLACE WITH YOUR OWN API KEY
-        # if u just want to fool around and want me to get u one lmk
+        # Set API key and formulate the request we're making to GPT4
         api_key = os.getenv("OPENAI_API_KEY")
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
         payload = {
-            "model": "gpt-3.5-turbo",
+            "model": "gpt-4",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.7,
             "max_tokens": 150,
         }
+        # complete the request with the request we just created
         response = requests.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
-        
+        # if the response status code is 200, then the request is successful.
         if response.status_code == 200:
-            # Extracting the text from the response
+            # in that case, strip gpt's text response from chatgpt's response
             return response.json()["choices"][0]["message"]["content"]
         else:
-            # Handle possible errors
+            # If there are errors, print it.
             return f"Error: {response.status_code}, {response.text}"
-
-    # Replace YOUR_PROMPT_HERE with your actual prompt
+        # Code fires twice as a result of an issue with req being made. Skip this function every other time 
+    if i == 0:
+        i = 1
+        continue
+    else:
+        i = 0
+    # Make the call to gpt4, store the result
     result = query_gpt4(prompt)
+    # hHelper method to send the result to the appropriate conversation
     def send_imessage(phone_number, message_text):
         """
         Sends an iMessage to a given phone number from your Mac.
@@ -115,8 +132,5 @@ while True:
         '''
         
         subprocess.run(["osascript", "-e", apple_script], text=True)
-    if i == 0:
-        i = 1
-    else:
-        i = 0
-        send_imessage(phone_number, result[6:])
+    # Send the text
+    send_imessage(phone_number, remove_prefix(result))
